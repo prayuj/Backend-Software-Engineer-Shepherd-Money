@@ -1,14 +1,13 @@
 package com.shepherdmoney.interviewproject.model;
 
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-import lombok.Setter;
-import lombok.ToString;
+import jakarta.persistence.*;
+import lombok.*;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.*;
 
 @Entity
 @Getter
@@ -25,16 +24,76 @@ public class CreditCard {
 
     private String number;
 
-    // TODO: Credit card's owner. For detailed hint, please see User class
+    @ManyToOne
+    private User user;
 
-    // TODO: Credit card's balance history. It is a requirement that the dates in the balanceHistory 
-    //       list must be in chronological order, with the most recent date appearing first in the list. 
-    //       Additionally, the first object in the list must have a date value that matches today's date, 
-    //       since it represents the current balance of the credit card. For example:
-    //       [
-    //         {date: '2023-04-13', balance: 1500},
-    //         {date: '2023-04-12', balance: 1200},
-    //         {date: '2023-04-11', balance: 1000},
-    //         {date: '2023-04-10', balance: 800}
-    //       ]
+    @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "credit_card_id")
+    @OrderBy("date DESC")
+    private List<BalanceHistory> balanceHistories = new ArrayList<>();
+
+    public void addTransactionToBalanceHistory(double transactionAmount, Instant time){
+        BalanceHistory balanceHistory = new BalanceHistory();
+        balanceHistory.setDate(time);
+
+        //Find position of balance history in balanceHistories
+        int index = Collections.binarySearch(balanceHistories, balanceHistory, (o1, o2) -> {
+            LocalDate date1 = o1.getDate().atZone(ZoneId.systemDefault()).toLocalDate();
+            LocalDate date2 = o2.getDate().atZone(ZoneId.systemDefault()).toLocalDate();
+            return date2.compareTo(date1); // Reverse order to have most recent date first
+        });
+
+        // if index is within list range then the date already exists. Update all balances from this day to the present with the new amount.
+        if (index >= 0 && index < balanceHistories.size()) {
+            for (int i = index; i >= 0; i--) {
+                BalanceHistory balanceHistoryTemp = balanceHistories.get(i);
+                balanceHistoryTemp.setBalance(balanceHistoryTemp.getBalance() + transactionAmount);
+                balanceHistories.set(i, balanceHistoryTemp);
+            }
+        } else {
+            index = -(index + 1); // Convert negative insertion point to index
+
+            // Add this balance to list
+            balanceHistory.setBalance(transactionAmount);
+            balanceHistories.add(balanceHistory);
+
+            // Update all balances from this day to the present with the new amount.
+            // Additionally, if there exists a gap in the days, fill those up.
+            // For example if this is the current array: [
+            //      {date: '2023-08-17', balance: 1200},
+            //      {date: '2023-08-16', balance: 1000},
+            //    ]
+            // and you have to add this transaction, {date: '2023-08-13', balance: 150}, all dates from 08/13 to 08/15 have to added to
+            // get the following:  [
+            //      {date: '2023-08-17', balance: 1350},
+            //      {date: '2023-08-16', balance: 1150},
+            //      {date: '2023-08-15', balance: 150},
+            //      {date: '2023-08-14', balance: 150},
+            //      {date: '2023-08-13', balance: 150},
+            //    ]
+
+            index--;
+            while(index >= 0) {
+                BalanceHistory balanceHistoryTemp = balanceHistories.get(index);
+                BalanceHistory prevDayBalanceHistoryTemp = balanceHistories.get(index + 1);
+
+                // Calculate the difference in days between the dates
+                long daysDifference = Duration.between(prevDayBalanceHistoryTemp.getDate(), balanceHistoryTemp.getDate()).toDays();
+
+                if (daysDifference == 1) {
+                    balanceHistoryTemp.setBalance(balanceHistoryTemp.getBalance() + transactionAmount);
+                    balanceHistories.set(index, balanceHistoryTemp);
+                    index--;
+                } else {
+                    // This condition is for scenarios discussed above regarding gaps.
+                    // Get the date one day after prevDayBalanceHistoryTemp's date
+                    Instant dateOneDayAfter = prevDayBalanceHistoryTemp.getDate().plus(Duration.ofDays(1));
+                    BalanceHistory newDayBalanceHistory = new BalanceHistory();
+                    newDayBalanceHistory.setDate(dateOneDayAfter);
+                    newDayBalanceHistory.setBalance(prevDayBalanceHistoryTemp.getBalance());
+                    balanceHistories.add(index + 1, newDayBalanceHistory);
+                }
+            }
+        }
+    }
 }
